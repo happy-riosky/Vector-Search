@@ -1,4 +1,5 @@
 from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from chromadb import Documents, EmbeddingFunction, Embeddings
 
 from .test_generator.test_config import TestConfig, TestSectionConfig
@@ -11,6 +12,17 @@ from .storage import QuestionType, Subject
 #         embeddings = OpenAIEmbedding().get_text_embedding_batch(input)
 #         return embeddings
 
+
+class BAAIEmbeddingFunction(EmbeddingFunction):
+    def __init__(self, model_name: str = "BAAI/bge-large-zh-v1.5"):
+        self.model_name = model_name
+        self.model = HuggingFaceEmbedding(model_name=model_name)
+    
+    def __call__(self, input: Documents) -> Embeddings:
+        # 会提示类型错误，但是可以正常运行
+        return self.model.get_text_embedding_batch(input)  # type: ignore
+
+
 mysql_config = {
     'host': 'localhost',
     'port': 3306,
@@ -22,7 +34,7 @@ mysql_config = {
 chromadb_config = {
     'allow_reset': True,
     'path': './db_demo',
-    # 'embedding_model': MyEmbeddingFunction(),
+    'embedding_function': BAAIEmbeddingFunction(),
     'collections': {
         'questions': {
             'name': 'questions',

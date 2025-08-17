@@ -6,13 +6,12 @@ from chromadb.config import Settings
 from ..utils import get_content_based_uuid, logger
 from .text_sliptter import CharacterTextSplitter
 
-
 class ChromaDBClient:
     def __init__(self, config: dict):
         self.config = config
         self.allow_reset = config.get("allow_reset", False)
         self.client = chromadb.PersistentClient(path=config["path"], settings=Settings(allow_reset=self.allow_reset))
-        self.embedding_model = config.get("embedding_model", None)
+        self.embedding_function = config.get("embedding_function", None)
         self.text_splitter = config.get(
             "text_splitter", CharacterTextSplitter())
         self.max_length = config.get("max_length", 10)
@@ -40,17 +39,41 @@ class ChromaDBClient:
             collections: 集合名称和集合配置
         """
         for collection_name in collections.keys():
+            logger.info(f"创建集合: {collection_name}, embedding_function: {self.embedding_function}")
+            
             if self._is_collection_exists(collection_name):
                 logger.debug(f"集合: {collection_name} 已存在")
                 continue
-            if self.embedding_model is not None:
+            if self.embedding_function is not None:
                 logger.info(
-                    f"创建集合: {collection_name} 使用embedding_model: {self.embedding_model}")
+                    f"创建集合: {collection_name} 使用自定义 embedding_function: {self.embedding_function}")
                 self.client.create_collection(
-                    name=collection_name, embedding_function=self.embedding_model)
+                    name=collection_name, embedding_function=self.embedding_function)
             else:
+                logger.info(
+                    f"创建集合: {collection_name} 使用默认 embedding_function")
                 self.client.create_collection(name=collection_name)
 
+    def _get_collection_with_embedding_function(self, collection_name: str):
+        """
+        获取集合并确保使用正确的embedding function
+        
+        Args:
+            collection_name: 集合名称
+            
+        Returns:
+            Collection: 带有正确embedding function的集合对象
+        """
+        collection = self.client.get_collection(name=collection_name)
+        
+        # ChromaDB的一个问题：get_collection不会恢复原始的embedding function
+        # 我们需要手动重新设置
+        if self.embedding_function is not None:
+            collection._embedding_function = self.embedding_function
+            logger.debug(f"为集合 {collection_name} 重新应用自定义 embedding function")
+        
+        return collection
+        
     def _add_document(self, collection_name: str, document: str, metadata: dict):
         """
         添加文档, 会先进行文本分割, 然后添加到集合中
@@ -62,7 +85,7 @@ class ChromaDBClient:
         """
         chunks = self.text_splitter.split(
             document, self.max_length, self.overlap)
-        collection = self.client.get_collection(name=collection_name)
+        collection = self._get_collection_with_embedding_function(collection_name)
         for chunk in chunks:
             chunk_uuid = get_content_based_uuid(chunk)
             collection.add(ids=[chunk_uuid], documents=[
@@ -123,7 +146,7 @@ class ChromaDBClient:
         """
         查询文档, 在 chromadb 原生的 query 基础上, 添加了对 metadata 中 uuid 的提取
         """
-        collection = self.client.get_collection(name=collection_name)
+        collection = self._get_collection_with_embedding_function(collection_name)
         result = collection.query(
             query_embeddings=query_embeddings,
             query_texts=query_texts,
@@ -142,7 +165,7 @@ class ChromaDBClient:
         """
         查询文档, 在 chromadb 原生的 query 基础上, 添加了对 metadata 中 uuid 的提取
         """
-        collection = self.client.get_collection(name=collection_name)
+        collection = self._get_collection_with_embedding_function(collection_name)
         result = {}
         for uuid in uuids:
             result[uuid] = collection.get(where={"uuid": uuid}, include=include)
@@ -157,7 +180,7 @@ class ChromaDBClient:
             uuid: 文档 uuid
             metadata: 文档元数据
         """
-        collection = self.client.get_collection(name=collection_name)
+        collection = self._get_collection_with_embedding_function(collection_name)
         collection.delete(where={"uuid": uuid})
         if collection_name == "questions":
             self.add_question(metadata)
@@ -174,8 +197,24 @@ class ChromaDBClient:
             collection_name: 集合名称
             uuid: 原始 uuid
         """
-        collection = self.client.get_collection(name=collection_name)
+        collection = self._get_collection_with_embedding_function(collection_name)
         collection.delete(where={"uuid": uuid})
+
+    def get_collection(self, collection_name: str):
+        """
+        获取集合，确保使用正确的embedding function
+        
+        Args:
+            collection_name: 集合名称
+            
+        Returns:
+            Collection: 带有正确embedding function的集合对象
+            
+        Note:
+            这是对外的公共方法，可以用来替代直接访问 self.client.get_collection()
+            以确保embedding function的正确性
+        """
+        return self._get_collection_with_embedding_function(collection_name)
 
     def desc_collection(self, collection_name: str, show_content: bool = True, limit: int = 10):
         """
