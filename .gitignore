@@ -211,3 +211,6 @@ __marimo__/
 
 # Trash
 **/.DS_Store
+
+# IDE
+.vscode/
